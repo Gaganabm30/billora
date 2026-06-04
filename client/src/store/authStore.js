@@ -13,7 +13,8 @@ export const apiRequest = async (url, options = {}) => {
     ...options.headers
   };
 
-  const response = await fetch(url, {
+  const API_BASE = import.meta.env.VITE_API_URL || '';
+  const response = await fetch(`${API_BASE}${url}`, {
     ...options,
     headers
   });
