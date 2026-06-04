@@ -1,0 +1,227 @@
+// prisma/schema.prisma
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum OrgStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum MemberRole {
+  ORG_ADMIN
+  FINANCE_MANAGER
+  TEAM_MEMBER
+}
+
+enum MemberStatus {
+  ACTIVE
+  INVITED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  TRIALING
+}
+
+enum InvoiceStatus {
+  PAID
+  PENDING
+  OVERDUE
+}
+
+enum PaymentStatus {
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum NotificationType {
+  PAYMENT_FAILED
+  INVOICE_GENERATED
+  TRIAL_ENDING
+  SUBSCRIPTION_EXPIRY
+  GENERAL
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+}
+
+model User {
+  id           String        @id @default(uuid()) @map("_id")
+  email        String        @unique
+  passwordHash String
+  name         String
+  avatarUrl    String?
+  isSuperAdmin Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  memberships  Member[]
+  tickets      Ticket[]
+  logs         ActivityLog[]
+  notifications Notification[]
+}
+
+model Organization {
+  id                    String         @id @default(uuid()) @map("_id")
+  name                  String
+  slug                  String         @unique
+  logoUrl               String?
+  status                OrgStatus      @default(ACTIVE)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  members               Member[]
+  subscriptions         Subscription[]
+  invoices              Invoice[]
+  payments      Payment[]
+  tickets       Ticket[]
+  logs          ActivityLog[]
+  notifications Notification[]
+  industry              String?
+  companySize           String?
+  country               String?
+  currency              String?        @default("USD")
+  timezone              String?        @default("UTC")
+  themeColor            String?        @default("#14b8a6")
+  accentColor           String?        @default("#06b6d4")
+  invoiceHeader         String?
+  invoiceNotes          String?
+  isOnboardingCompleted Boolean        @default(true)
+}
+
+model Member {
+  id             String       @id @default(uuid()) @map("_id")
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           MemberRole   @default(TEAM_MEMBER)
+  status         MemberStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([userId, organizationId])
+}
+
+model Plan {
+  id           String         @id @default(uuid()) @map("_id")
+  name         String         // Free, Pro, Enterprise
+  slug         String         @unique
+  description  String
+  priceMonthly Float
+  priceYearly  Float
+  features     Json           // JSON list of features
+  apiLimit     Int            // e.g. API requests per month
+  storageLimit Int            // e.g. Storage in MB
+  seatLimit    Int            // e.g. max team members
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id                    String             @id @default(uuid()) @map("_id")
+  organizationId        String
+  organization          Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  planId                String
+  plan                  Plan               @relation(fields: [planId], references: [id])
+  status                SubscriptionStatus @default(TRIALING)
+  currentPeriodStart    DateTime           @default(now())
+  currentPeriodEnd      DateTime
+  cancelAtPeriodEnd     Boolean            @default(false)
+  stripeSubscriptionId  String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  invoices              Invoice[]
+}
+
+model Invoice {
+  id             String        @id @default(uuid()) @map("_id")
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subscriptionId String
+  subscription   Subscription  @relation(fields: [subscriptionId], references: [id])
+  invoiceNumber  String        @unique // e.g. INV-2026-0001
+  amount         Float
+  tax            Float
+  total          Float
+  status         InvoiceStatus @default(PENDING)
+  pdfUrl         String?
+  dueDate        DateTime
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  payments       Payment[]
+}
+
+model Payment {
+  id             String        @id @default(uuid()) @map("_id")
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoiceId      String?
+  invoice        Invoice?      @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  amount         Float
+  paymentMethod  String        // e.g. CARD, UPI, BANK_TRANSFER
+  status         PaymentStatus @default(SUCCESS)
+  transactionId  String        @unique
+  refundReason   String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model Notification {
+  id             String           @id @default(uuid()) @map("_id")
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String?
+  organization   Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String
+  message        String
+  type           NotificationType @default(GENERAL)
+  read           Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+}
+
+model Ticket {
+  id             String         @id @default(uuid()) @map("_id")
+  userId         String
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title          String
+  description    String
+  priority       TicketPriority @default(MEDIUM)
+  status         TicketStatus   @default(OPEN)
+  chatHistory    Json           @default("[]") // JSON list of chat messages: [{sender: "user"|"support", text: string, time: string}]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+}
+
+model ActivityLog {
+  id             String        @id @default(uuid()) @map("_id")
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  action         String        // e.g. "INVITE_USER", "PAYMENT_REFUNDED", "PLAN_UPGRADED"
+  details        String
+  ipAddress      String?
+  createdAt      DateTime      @default(now())
+}
